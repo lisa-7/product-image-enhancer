@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Product Image Enhancement</title>
+    <style>
+        body {
+            font-family: Arial;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .preview-container {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-top: 25px;
+        }
+
+        img {
+            width: 300px;
+            border: 2px solid silver;
+            border-radius: 10px;
+            display: none;
+        }
+
+        h3 {
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h2>Product Image Enhancement Tool</h2>
+
+    <input type="file" id="fileInput" accept="image/*">
+    <button onclick="uploadImage()">Enhance</button>
+
+    <div class="preview-container">
+        <div>
+            <h3>Original</h3>
+            <img id="originalImg">
+        </div>
+        <div>
+            <h3>Enhanced</h3>
+            <img id="enhancedImg">
+        </div>
+    </div>
+
+    <script>
+        async function uploadImage() {
+            const file = document.getElementById("fileInput").files[0];
+            if (!file) return alert("Please upload an image.");
+
+            // Preview the original instantly (no backend needed)
+            const originalImg = document.getElementById("originalImg");
+            originalImg.src = URL.createObjectURL(file);
+            originalImg.style.display = "block";
+
+            // Send to backend for enhancement
+            const formData = new FormData();
+            formData.append("file", file);
+
+            const res = await fetch("http://127.0.0.1:8000/enhance", {
+                method: "POST",
+                body: formData
+            });
+
+            const data = await res.json();
+
+            // Preview enhanced image
+            const enhancedImg = document.getElementById("enhancedImg");
+            enhancedImg.src = "data:image/jpeg;base64," + data.enhanced_image;
+            enhancedImg.style.display = "block";
+        }
+    </script>
+
+</body>
+
+</html>
