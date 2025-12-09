@@ -28,6 +28,14 @@
         h3 {
             margin-bottom: 5px;
         }
+
+        .options {
+            margin-top: 15px;
+        }
+
+        .options label {
+            margin-right: 15px;
+        }
     </style>
 </head>
 
@@ -36,7 +44,13 @@
     <h2>Product Image Enhancement Tool</h2>
 
     <input type="file" id="fileInput" accept="image/*">
-    <button onclick="uploadImage()">Enhance</button>
+
+    <div class="options">
+        <label><input type="checkbox" id="removeBg" checked> Remove Background</label>
+        <label><input type="checkbox" id="enhance" checked> Enhance Object</label>
+    </div>
+
+    <button onclick="uploadImage()">Apply</button>
 
     <div class="preview-container">
         <div>
@@ -44,7 +58,7 @@
             <img id="originalImg">
         </div>
         <div>
-            <h3>Enhanced</h3>
+            <h3>Result</h3>
             <img id="enhancedImg">
         </div>
     </div>
@@ -54,14 +68,14 @@
             const file = document.getElementById("fileInput").files[0];
             if (!file) return alert("Please upload an image.");
 
-            // Preview the original instantly (no backend needed)
             const originalImg = document.getElementById("originalImg");
             originalImg.src = URL.createObjectURL(file);
             originalImg.style.display = "block";
 
-            // Send to backend for enhancement
             const formData = new FormData();
             formData.append("file", file);
+            formData.append("remove_bg", document.getElementById("removeBg").checked);
+            formData.append("enhance", document.getElementById("enhance").checked);
 
             const res = await fetch("http://127.0.0.1:8000/enhance", {
                 method: "POST",
@@ -70,9 +84,8 @@
 
             const data = await res.json();
 
-            // Preview enhanced image
             const enhancedImg = document.getElementById("enhancedImg");
-            enhancedImg.src = "data:image/jpeg;base64," + data.enhanced_image;
+            enhancedImg.src = "data:image/png;base64," + data.enhanced_image;
             enhancedImg.style.display = "block";
         }
     </script>

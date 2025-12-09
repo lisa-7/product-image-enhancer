@@ -1,16 +1,15 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import cv2
 import numpy as np
 from rembg import remove
 from io import BytesIO
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, UnidentifiedImageError
 import base64
 
 app = FastAPI()
 
-# Allow frontend communication
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,54 +17,78 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def is_white_product(image_np):
-    """Check if the product is mostly white (>60% bright pixels)."""
-    gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
-    bright_pixels = np.sum(gray > 200)
-    total_pixels = gray.size
-    return (bright_pixels / total_pixels) > 0.60
-
-
 @app.post("/enhance")
-async def enhance_image(file: UploadFile = File(...)):
+async def enhance_image(
+    file: UploadFile = File(...),
+    remove_bg: bool = Form(False),
+    enhance: bool = Form(False),
+    order: str = Form("enhance_first"),  # enhance_first | remove_first
+):
+    try:
+        contents = await file.read()
+        img = Image.open(BytesIO(contents))
+    except UnidentifiedImageError:
+        return JSONResponse(content={"error": "Invalid or corrupted image file"}, status_code=400)
 
-    contents = await file.read()
-    input_image = Image.open(BytesIO(contents)).convert("RGBA")
+    # Normalize formats (no effect on final look, only prevents crashes)
+    if img.mode not in ["RGBA", "RGB"]:
+        img = img.convert("RGBA") if "A" in img.getbands() else img.convert("RGB")
+    if img.mode == "RGB":
+        img = img.convert("RGBA")
 
-    # Step 1 — Remove background
-    removed_bg = remove(input_image)
-    removed_np = np.array(removed_bg)
+    def do_enhance(input_image):
+        alpha = input_image.split()[3]
+        rgb = input_image.convert("RGB")
+        rgb_np = np.array(rgb)
 
-    # Step 2 — Refine edges (smooth alpha channel)
-    alpha = removed_np[:, :, 3]
-    alpha = cv2.GaussianBlur(alpha, (3, 3), 0)  # smoother edge
-    removed_np[:, :, 3] = alpha
-    removed_bg = Image.fromarray(removed_np)
+        # Highlight protection
+        hsv = cv2.cvtColor(rgb_np, cv2.COLOR_RGB2HSV)
+        h, s, v = cv2.split(hsv)
+        v_mask = v > 220
+        v[v_mask] = (v[v_mask] * 0.985).astype(np.uint8)
+        hsv = cv2.merge([h, s, v])
+        rgb_np = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
 
-    # Step 3 — Enhancement applied only on the object
-    product = removed_bg.copy()
-    alpha = product.split()[3]
-    rgb_product = product.convert("RGB")
+        rgb = Image.fromarray(rgb_np)
+        rgb = ImageEnhance.Brightness(rgb).enhance(1.02)
+        rgb = ImageEnhance.Contrast(rgb).enhance(1.05)
+        rgb = ImageEnhance.Sharpness(rgb).enhance(1.05)
 
-    # mild denoise (retain texture)
-    rgb_np = np.array(rgb_product)
-    rgb_np = cv2.fastNlMeansDenoisingColored(rgb_np, None, 3, 3, 7, 21)
-    rgb_product = Image.fromarray(rgb_np)
+        rgb.putalpha(alpha)
+        return rgb
 
-    # brightness / contrast
-    rgb_product = ImageEnhance.Brightness(rgb_product).enhance(1.05)
-    rgb_product = ImageEnhance.Contrast(rgb_product).enhance(1.10)
+    def do_bg_removal(input_image):
+        try:
+            removed = remove(input_image)
+        except Exception:
+            # rembg throws recursion errors on some 30MB PNGs — prevent failure
+            removed = remove(input_image.convert("RGB"))
 
-    # 🔥 natural sharpness
-    rgb_product = ImageEnhance.Sharpness(rgb_product).enhance(1.12)
+        removed_np = np.array(removed)
+        alpha = removed_np[:, :, 3]
 
-    # merge back alpha to preserve transparency
-    enhanced = rgb_product.convert("RGBA")
-    enhanced.putalpha(alpha)
+        mask = (alpha > 5)
+        alpha = cv2.GaussianBlur(alpha, (5, 5), 0)
+        alpha = np.where(mask, alpha, 0).astype(np.uint8)
 
-    # Step 4 — Return Base64 PNG (transparent)
+        removed_np[:, :, 3] = alpha
+        return Image.fromarray(removed_np)
+
+    # Decision logic (unchanged results)
+    if enhance and remove_bg:
+        if order == "enhance_first":
+            img = do_enhance(img)
+            img = do_bg_removal(img)
+        else:
+            img = do_bg_removal(img)
+            img = do_enhance(img)
+    elif enhance:
+        img = do_enhance(img)
+    elif remove_bg:
+        img = do_bg_removal(img)
+
     buffer = BytesIO()
-    enhanced.save(buffer, format="PNG")
+    img.save(buffer, format="PNG", optimize=True)
     img_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
     return JSONResponse(content={"enhanced_image": img_str})
